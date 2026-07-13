@@ -49,6 +49,9 @@ healthcare-agent/
 ├── docs/
 │   └── architecture.md     # Architecture documentation and diagrams
 ├── tests/                  # Automated tests
+├── Dockerfile              # Shared production container image
+├── docker-compose.yml      # FastAPI and Streamlit service orchestration
+├── .dockerignore           # Docker build context exclusions
 ├── .env.example            # Environment variable template
 └── requirements.txt        # Python dependencies
 ```
@@ -97,6 +100,39 @@ streamlit run app/ui/streamlit_app.py
 To use a backend at another address, set `BACKEND_URL` in `.env` before starting
 Streamlit.
 
+## Docker
+
+Docker Compose builds one application image and runs it as two services:
+
+- `healthcare-api` serves FastAPI at `http://localhost:8000`.
+- `healthcare-ui` serves Streamlit at `http://localhost:8501`.
+
+Copy the environment template and set `OPENAI_API_KEY` before starting the
+stack:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Build the image:
+
+```powershell
+docker compose build
+```
+
+Start both services:
+
+```powershell
+docker compose up
+```
+
+The Streamlit service waits for the FastAPI health check to pass before it
+starts. Stop and remove the containers and Compose network with:
+
+```powershell
+docker compose down
+```
+
 ## Example Requests
 
 Check service status:
@@ -139,4 +175,4 @@ added here._
 - Store provider and appointment data in a durable database
 - Add rate limiting, request tracing, and operational metrics
 - Expand automated unit, integration, and end-to-end test coverage
-- Add containerization and continuous deployment workflows
+- Add continuous integration and automated container publishing
