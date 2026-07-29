@@ -1,5 +1,11 @@
 from pydantic import BaseModel
 
+from app.application.service_interfaces import ProviderDirectoryService
+from app.domain.models import ProviderSearchCriteria
+from app.infrastructure.synthetic.composition import (
+    build_synthetic_services,
+)
+
 
 class ProviderSearchRequest(BaseModel):
     location: str
@@ -7,20 +13,39 @@ class ProviderSearchRequest(BaseModel):
     gender: str | None = None
 
 
-def provider_search(request: ProviderSearchRequest):
+def provider_search(
+    request: ProviderSearchRequest,
+    service: ProviderDirectoryService | None = None,
+):
     """
-    Search providers.
-
-    (Hardcoded implementation for now.)
+    Adapt the model-facing request to the provider directory service.
     """
+    provider_directory = (
+        service or build_synthetic_services().provider_directory
+    )
+    candidates = provider_directory.search(
+        ProviderSearchCriteria(
+            location=request.location,
+            specialty=request.specialty,
+            gender=request.gender,
+        )
+    )
 
     return [
         {
-            "name": "Dr. Sarah Johnson",
-            "specialty": request.specialty,
-            "location": request.location,
-            "gender": "Female",
+            "provider_id": candidate.provider.provider_id,
+            "provider_location_id": (
+                candidate.location.provider_location_id
+            ),
+            "name": candidate.provider.display_name,
+            "specialty": candidate.matched_specialty,
+            "location": candidate.location.city,
+            "address": candidate.location.address,
+            "gender": candidate.provider.gender,
+            "languages": list(candidate.provider.languages),
+            "modalities": list(candidate.location.modalities),
         }
+        for candidate in candidates
     ]
 
 provider_search_tool = {

@@ -2,6 +2,10 @@ import json
 import logging
 
 from app.config import DEFAULT_MODEL, TEMPERATURE
+from app.infrastructure.synthetic.composition import (
+    HealthcareServices,
+    build_synthetic_services,
+)
 from app.llm.llm_client import get_llm_client
 from app.memory.memory_extractor import MemoryExtractor
 from app.memory.memory_manager import MemoryManager
@@ -37,9 +41,13 @@ class HealthcareAgent:
         self,
         tool_registry: ToolRegistry,
         memory_manager: MemoryManager,
+        healthcare_services: HealthcareServices | None = None,
     ):
         self.registry = tool_registry
         self.manager = memory_manager
+        self.healthcare_services = (
+            healthcare_services or build_synthetic_services()
+        )
         self.memory_extractor = MemoryExtractor()
         self.client = get_llm_client()
         self.messages = [
@@ -54,7 +62,10 @@ class HealthcareAgent:
             RegisteredTool(
                 definition=provider_search_tool,
                 request_model=ProviderSearchRequest,
-                handler=provider_search,
+                handler=lambda request: provider_search(
+                    request,
+                    self.healthcare_services.provider_directory,
+                ),
             ),
         )
         self.registry.register(
@@ -62,7 +73,12 @@ class HealthcareAgent:
             RegisteredTool(
                 definition=insurance_verification_tool,
                 request_model=InsuranceVerificationRequest,
-                handler=verify_insurance,
+                handler=lambda request: verify_insurance(
+                    request,
+                    self.healthcare_services.member_profiles,
+                    self.healthcare_services.provider_directory,
+                    self.healthcare_services.network_verification,
+                ),
             ),
         )
 

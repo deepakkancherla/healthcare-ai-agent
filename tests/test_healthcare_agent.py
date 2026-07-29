@@ -140,7 +140,12 @@ def test_agent_runs_existing_multi_step_tool_loop(agent_factory):
     booking_result = json.loads(tool_messages[2]["content"])
 
     assert provider_result[0]["name"] == "Dr. Sarah Johnson"
+    assert provider_result[0]["provider_id"] == (
+        "provider-sarah-johnson"
+    )
     assert insurance_result["accepted"] is True
+    assert insurance_result["network_status"] == "in_network"
+    assert insurance_result["health_plan_id"] == "plan-bcbs-ppo"
     assert booking_result == {
         "provider_name": "Dr. Sarah Johnson",
         "patient_name": "Deepak",
