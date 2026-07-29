@@ -7,6 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.agent.healthcare_agent import HealthcareAgent
 from app.api.schemas import ChatRequest, ChatResponse
+from app.memory.memory_manager import MemoryManager
+from app.tools.tool_registry import ToolRegistry
+
+memory_manager = MemoryManager()
+tool_registry = ToolRegistry()
 
 
 logger = logging.getLogger(__name__)
@@ -19,7 +24,10 @@ agent_lock = Lock()
 @lru_cache(maxsize=1)
 def get_healthcare_agent() -> HealthcareAgent:
     try:
-        return HealthcareAgent()
+        return HealthcareAgent(
+            tool_registry=tool_registry,
+            memory_manager=memory_manager,
+        )
     except Exception as error:
         logger.exception("Failed to initialize the healthcare agent.")
         raise HTTPException(

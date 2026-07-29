@@ -73,7 +73,7 @@ Add your OpenAI API key to `.env`:
 
 ```dotenv
 OPENAI_API_KEY=your_api_key_here
-BACKEND_URL=http://localhost:8000
+BACKEND_URL=https://healthcare-ai-agent-407188466788.us-central1.run.app
 ```
 
 Never commit the populated `.env` file.
@@ -86,8 +86,8 @@ Start the backend from the repository root:
 uvicorn app.api.main:app --reload
 ```
 
-The API is available at `http://localhost:8000`. Interactive Swagger
-documentation is available at `http://localhost:8000/docs`.
+The API is available at `https://healthcare-ai-agent-407188466788.us-central1.run.app`. Interactive Swagger
+documentation is available at `https://healthcare-ai-agent-407188466788.us-central1.run.app/docs`.
 
 ## Running Streamlit
 
@@ -100,11 +100,28 @@ streamlit run app/ui/streamlit_app.py
 To use a backend at another address, set `BACKEND_URL` in `.env` before starting
 Streamlit.
 
+## Testing
+
+Install the application and development dependencies:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+```
+
+Run the complete offline test suite:
+
+```powershell
+python -m pytest
+```
+
+The tests replace OpenAI with deterministic fakes and do not require network
+access or consume API credits.
+
 ## Docker
 
 Docker Compose builds one application image and runs it as two services:
 
-- `healthcare-api` serves FastAPI at `http://localhost:8000`.
+- `healthcare-api` serves FastAPI at `https://healthcare-ai-agent-407188466788.us-central1.run.app`.
 - `healthcare-ui` serves Streamlit at `http://localhost:8501`.
 
 Copy the environment template and set `OPENAI_API_KEY` before starting the
@@ -138,7 +155,7 @@ docker compose down
 Check service status:
 
 ```powershell
-curl.exe http://localhost:8000/
+curl.exe https://healthcare-ai-agent-407188466788.us-central1.run.app/
 ```
 
 ```json
@@ -152,7 +169,7 @@ curl.exe http://localhost:8000/
 Send a chat request:
 
 ```powershell
-curl.exe -X POST http://localhost:8000/chat `
+curl.exe -X POST https://healthcare-ai-agent-407188466788.us-central1.run.app/chat `
   -H "Content-Type: application/json" `
   -d '{"message":"Find a cardiologist who accepts my insurance."}'
 ```

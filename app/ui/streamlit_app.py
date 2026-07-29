@@ -1,7 +1,15 @@
 import logging
+import sys
+from pathlib import Path
 
 import requests
 import streamlit as st
+
+# Streamlit adds the script's directory (app/ui) to sys.path when this file is
+# launched directly. Add the repository root so the app package can be imported
+# by the documented command: streamlit run app/ui/streamlit_app.py.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.config import configure_logging, get_backend_url
 
