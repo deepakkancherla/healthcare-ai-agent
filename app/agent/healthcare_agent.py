@@ -3,6 +3,8 @@ import logging
 
 from app.config import DEFAULT_MODEL, TEMPERATURE
 from app.llm.llm_client import get_llm_client
+from app.memory.memory_extractor import MemoryExtractor
+from app.memory.memory_manager import MemoryManager
 from app.prompts.system_prompt import SYSTEM_PROMPT
 from app.tools.insurance import (
     InsuranceVerificationRequest,
@@ -31,7 +33,14 @@ logger = logging.getLogger(__name__)
 
 
 class HealthcareAgent:
-    def __init__(self):
+    def __init__(
+        self,
+        tool_registry: ToolRegistry,
+        memory_manager: MemoryManager,
+    ):
+        self.registry = tool_registry
+        self.manager = memory_manager
+        self.memory_extractor = MemoryExtractor()
         self.client = get_llm_client()
         self.messages = [
             {
@@ -39,7 +48,6 @@ class HealthcareAgent:
                 "content": SYSTEM_PROMPT,
             }
         ]
-        self.registry = ToolRegistry()
 
         self.registry.register(
             "provider_search",
@@ -68,6 +76,22 @@ class HealthcareAgent:
         )
 
     def chat(self, user_input: str) -> str:
+        memories = self.memory_extractor.extract(user_input)
+        for key, value in memories.items():
+            self.manager.save("deepak", key, value)
+
+        user_memory = self.manager.load("deepak")
+        if user_memory:
+            self.messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Use this known user memory when relevant: "
+                        f"{json.dumps(user_memory.preferences)}"
+                    ),
+                }
+            )
+
         self.messages.append(
             {
                 "role": "user",
