@@ -11,6 +11,7 @@ from app.domain.models import (
     Provider,
     ProviderLocation,
     ProviderNetwork,
+    SchedulingWorkflow,
 )
 
 
@@ -72,3 +73,19 @@ class AppointmentRepository(Protocol):
     def get(self, appointment_id: str) -> Appointment | None: ...
 
     def list_all(self) -> list[Appointment]: ...
+
+
+class WorkflowRepository(Protocol):
+    def get(self, workflow_id: str) -> SchedulingWorkflow | None: ...
+
+    def find_by_conversation(
+        self,
+        member_id: str,
+        conversation_id: str,
+    ) -> SchedulingWorkflow | None: ...
+
+    def save(
+        self,
+        workflow: SchedulingWorkflow,
+        expected_version: int | None,
+    ) -> None: ...

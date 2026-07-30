@@ -9,6 +9,21 @@ class NetworkStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
+class WorkflowState(str, Enum):
+    COLLECTING_REQUIREMENTS = "collecting_requirements"
+    SEARCHING_PROVIDERS = "searching_providers"
+    VERIFYING_NETWORK = "verifying_network"
+    SEARCHING_AVAILABILITY = "searching_availability"
+    PRESENTING_OPTIONS = "presenting_options"
+    AWAITING_SELECTION = "awaiting_selection"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    BOOKING = "booking"
+    CONFIRMED = "confirmed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    HANDED_OFF = "handed_off"
+
+
 @dataclass(frozen=True)
 class Member:
     member_id: str
@@ -106,6 +121,21 @@ class AppointmentSlot:
 
 
 @dataclass(frozen=True)
+class AvailabilityQuery:
+    provider_id: str
+    provider_location_id: str
+    start_date: date
+    end_date: date
+    modality: str | None = None
+
+    def __post_init__(self):
+        if self.start_date > self.end_date:
+            raise ValueError(
+                "Availability start date must not be after end date."
+            )
+
+
+@dataclass(frozen=True)
 class Appointment:
     appointment_id: str
     member_id: str
@@ -139,6 +169,12 @@ class ProviderCandidate:
 
 
 @dataclass(frozen=True)
+class ProviderReference:
+    provider_id: str
+    provider_location_id: str
+
+
+@dataclass(frozen=True)
 class NetworkVerificationResult:
     status: NetworkStatus
     member_id: str
@@ -150,3 +186,39 @@ class NetworkVerificationResult:
     service_date: date
     source_reference: str | None
     reason: str
+
+
+@dataclass(frozen=True)
+class AppointmentSelection:
+    slot_id: str
+    slot_version: int
+    member_id: str
+    workflow_id: str
+    provider_id: str
+    provider_location_id: str
+    start_at: datetime
+    end_at: datetime
+    time_zone: str
+    modality: str
+    network_status: NetworkStatus
+    health_plan_id: str
+    network_id: str
+    network_source_reference: str
+    network_service_date: date
+
+
+@dataclass(frozen=True)
+class SchedulingWorkflow:
+    workflow_id: str
+    member_id: str
+    conversation_id: str
+    state: WorkflowState
+    version: int
+    created_at: datetime
+    updated_at: datetime
+    search_criteria: ProviderSearchCriteria | None = None
+    provider_candidates: tuple[ProviderReference, ...] = ()
+    network_result: NetworkVerificationResult | None = None
+    availability_query: AvailabilityQuery | None = None
+    available_slot_ids: tuple[str, ...] = ()
+    selection: AppointmentSelection | None = None

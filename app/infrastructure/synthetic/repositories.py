@@ -10,6 +10,7 @@ from app.domain.models import (
     Provider,
     ProviderLocation,
     ProviderNetwork,
+    SchedulingWorkflow,
 )
 
 
@@ -152,3 +153,53 @@ class InMemoryAppointmentRepository:
 
     def list_all(self) -> list[Appointment]:
         return list(self._appointments.values())
+
+
+class WorkflowVersionConflict(RuntimeError):
+    """Raised when workflow optimistic concurrency validation fails."""
+
+
+class InMemoryWorkflowRepository:
+    def __init__(
+        self,
+        workflows: tuple[SchedulingWorkflow, ...] = (),
+    ):
+        self._workflows = {
+            workflow.workflow_id: workflow for workflow in workflows
+        }
+
+    def get(self, workflow_id: str) -> SchedulingWorkflow | None:
+        return self._workflows.get(workflow_id)
+
+    def find_by_conversation(
+        self,
+        member_id: str,
+        conversation_id: str,
+    ) -> SchedulingWorkflow | None:
+        return next(
+            (
+                workflow
+                for workflow in self._workflows.values()
+                if workflow.member_id == member_id
+                and workflow.conversation_id == conversation_id
+            ),
+            None,
+        )
+
+    def save(
+        self,
+        workflow: SchedulingWorkflow,
+        expected_version: int | None,
+    ) -> None:
+        existing = self._workflows.get(workflow.workflow_id)
+        if expected_version is None:
+            if existing is not None:
+                raise WorkflowVersionConflict(
+                    "Scheduling workflow already exists."
+                )
+        elif existing is None or existing.version != expected_version:
+            raise WorkflowVersionConflict(
+                "Scheduling workflow version does not match."
+            )
+
+        self._workflows[workflow.workflow_id] = workflow

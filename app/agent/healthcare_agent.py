@@ -11,9 +11,17 @@ from app.memory.memory_extractor import MemoryExtractor
 from app.memory.memory_manager import MemoryManager
 from app.prompts.system_prompt import SYSTEM_PROMPT
 from app.tools.insurance import (
-    InsuranceVerificationRequest,
+    NetworkVerificationToolRequest,
     insurance_verification_tool,
     verify_insurance,
+)
+from app.tools.availability import (
+    AppointmentSelectionRequest,
+    AvailabilitySearchRequest,
+    appointment_selection_tool,
+    availability_search_tool,
+    search_availability,
+    select_appointment_slot,
 )
 from app.tools.provider_search import (
     provider_search,
@@ -25,13 +33,6 @@ from app.tools.tool_registry import (
     ToolRegistry,
     RegisteredTool,
 )
-
-from app.tools.appointment import (
-    AppointmentBookingRequest,
-    appointment_booking_tool,
-    book_appointment,
-)
-
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ class HealthcareAgent:
                 handler=lambda request: provider_search(
                     request,
                     self.healthcare_services.provider_directory,
+                    self.healthcare_services.scheduling_workflows,
                 ),
             ),
         )
@@ -72,22 +74,39 @@ class HealthcareAgent:
             "verify_insurance",
             RegisteredTool(
                 definition=insurance_verification_tool,
-                request_model=InsuranceVerificationRequest,
+                request_model=NetworkVerificationToolRequest,
                 handler=lambda request: verify_insurance(
                     request,
                     self.healthcare_services.member_profiles,
                     self.healthcare_services.provider_directory,
                     self.healthcare_services.network_verification,
+                    self.healthcare_services.scheduling_workflows,
                 ),
             ),
         )
 
         self.registry.register(
-            "book_appointment",
+            "search_availability",
             RegisteredTool(
-                definition=appointment_booking_tool,
-                request_model=AppointmentBookingRequest,
-                handler=book_appointment,
+                definition=availability_search_tool,
+                request_model=AvailabilitySearchRequest,
+                handler=lambda request: search_availability(
+                    request,
+                    self.healthcare_services.availability,
+                    self.healthcare_services.scheduling_workflows,
+                ),
+            ),
+        )
+        self.registry.register(
+            "select_appointment_slot",
+            RegisteredTool(
+                definition=appointment_selection_tool,
+                request_model=AppointmentSelectionRequest,
+                handler=lambda request: select_appointment_slot(
+                    request,
+                    self.healthcare_services.availability,
+                    self.healthcare_services.scheduling_workflows,
+                ),
             ),
         )
 

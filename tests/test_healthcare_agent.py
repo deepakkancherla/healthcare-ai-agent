@@ -41,7 +41,7 @@ def test_agent_recalls_name_across_two_turns(agent_factory):
     assert len(client.completions.calls) == 2
 
 
-def test_agent_registers_existing_healthcare_tools(agent_factory):
+def test_agent_registers_phase_two_healthcare_tools(agent_factory):
     agent, _ = agent_factory([assistant_message("Done")])
 
     definitions = agent.registry.get_tool_definitions()
@@ -53,11 +53,14 @@ def test_agent_registers_existing_healthcare_tools(agent_factory):
     assert tool_names == {
         "provider_search",
         "verify_insurance",
-        "book_appointment",
+        "search_availability",
+        "select_appointment_slot",
     }
 
 
-def test_agent_runs_existing_multi_step_tool_loop(agent_factory):
+def test_agent_reaches_confirmation_in_multi_step_tool_loop(
+    agent_factory,
+):
     agent, client = agent_factory(
         [
             assistant_message(
@@ -84,6 +87,9 @@ def test_agent_runs_existing_multi_step_tool_loop(agent_factory):
                             {
                                 "insurance_name": "BCBS",
                                 "provider_name": "Dr. Sarah Johnson",
+                                "provider_location": "Plano",
+                                "specialty": "Dermatology",
+                                "service_date": "2026-08-04",
                             }
                         ),
                     )
@@ -92,33 +98,62 @@ def test_agent_runs_existing_multi_step_tool_loop(agent_factory):
             assistant_message(
                 tool_calls=[
                     tool_call(
-                        "booking-call",
-                        "book_appointment",
+                        "availability-call",
+                        "search_availability",
                         json.dumps(
                             {
-                                "provider_name": "Dr. Sarah Johnson",
-                                "patient_name": "Deepak",
-                                "appointment_date": "2026-08-04",
-                                "appointment_time": "10:00",
+                                "provider_id": (
+                                    "provider-sarah-johnson"
+                                ),
+                                "provider_location_id": (
+                                    "location-sarah-plano"
+                                ),
+                                "start_date": "2026-08-04",
+                                "end_date": "2026-08-04",
+                                "modality": "in_person",
                             }
                         ),
                     )
                 ]
             ),
             assistant_message(
-                "Your appointment is confirmed. Confirmation: ABC123."
+                "I found a 10:00 AM appointment. Would you like it?"
+            ),
+            assistant_message(
+                tool_calls=[
+                    tool_call(
+                        "selection-call",
+                        "select_appointment_slot",
+                        json.dumps(
+                            {
+                                "slot_id": (
+                                    "slot-sarah-plano-20260804-1000"
+                                )
+                            }
+                        ),
+                    )
+                ]
+            ),
+            assistant_message(
+                "Please confirm the selected appointment."
             ),
         ]
     )
 
-    response = agent.chat(
-        "Find a dermatologist and book an appointment."
+    options_response = agent.chat(
+        "Find a dermatologist appointment for August 4."
+    )
+    confirmation_response = agent.chat(
+        "Select the 10:00 AM appointment."
     )
 
-    assert response == (
-        "Your appointment is confirmed. Confirmation: ABC123."
+    assert options_response == (
+        "I found a 10:00 AM appointment. Would you like it?"
     )
-    assert len(client.completions.calls) == 4
+    assert confirmation_response == (
+        "Please confirm the selected appointment."
+    )
+    assert len(client.completions.calls) == 6
 
     tool_messages = [
         message
@@ -132,12 +167,14 @@ def test_agent_runs_existing_multi_step_tool_loop(agent_factory):
     ] == [
         "provider-call",
         "insurance-call",
-        "booking-call",
+        "availability-call",
+        "selection-call",
     ]
 
     provider_result = json.loads(tool_messages[0]["content"])
     insurance_result = json.loads(tool_messages[1]["content"])
-    booking_result = json.loads(tool_messages[2]["content"])
+    availability_result = json.loads(tool_messages[2]["content"])
+    selection_result = json.loads(tool_messages[3]["content"])
 
     assert provider_result[0]["name"] == "Dr. Sarah Johnson"
     assert provider_result[0]["provider_id"] == (
@@ -146,14 +183,27 @@ def test_agent_runs_existing_multi_step_tool_loop(agent_factory):
     assert insurance_result["accepted"] is True
     assert insurance_result["network_status"] == "in_network"
     assert insurance_result["health_plan_id"] == "plan-bcbs-ppo"
-    assert booking_result == {
-        "provider_name": "Dr. Sarah Johnson",
-        "patient_name": "Deepak",
-        "appointment_date": "2026-08-04",
-        "appointment_time": "10:00",
-        "confirmation_number": "ABC123",
-        "status": "confirmed",
-    }
+    assert availability_result["workflow_state"] == (
+        "awaiting_selection"
+    )
+    assert availability_result["slots"][0]["slot_id"] == (
+        "slot-sarah-plano-20260804-1000"
+    )
+    assert selection_result["workflow_state"] == (
+        "awaiting_confirmation"
+    )
+    assert selection_result["requires_confirmation"] is True
+
+    workflow = (
+        agent.healthcare_services.scheduling_workflows
+        .get_for_conversation("deepak", "conversation-deepak")
+    )
+    assert workflow is not None
+    assert workflow.state.value == "awaiting_confirmation"
+    assert workflow.selection is not None
+    assert workflow.selection.slot_id == (
+        "slot-sarah-plano-20260804-1000"
+    )
 
 
 def test_agent_propagates_llm_errors(agent_factory):
