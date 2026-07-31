@@ -23,6 +23,14 @@ from app.tools.availability import (
     search_availability,
     select_appointment_slot,
 )
+from app.tools.booking import (
+    BookConfirmedAppointmentRequest,
+    PrepareBookingConfirmationRequest,
+    book_confirmed_appointment,
+    book_confirmed_appointment_tool,
+    prepare_booking_confirmation,
+    prepare_booking_confirmation_tool,
+)
 from app.tools.provider_search import (
     provider_search,
     provider_search_tool,
@@ -105,6 +113,30 @@ class HealthcareAgent:
                 handler=lambda request: select_appointment_slot(
                     request,
                     self.healthcare_services.availability,
+                    self.healthcare_services.scheduling_workflows,
+                ),
+            ),
+        )
+        self.registry.register(
+            "prepare_booking_confirmation",
+            RegisteredTool(
+                definition=prepare_booking_confirmation_tool,
+                request_model=PrepareBookingConfirmationRequest,
+                handler=lambda request: prepare_booking_confirmation(
+                    request,
+                    self.healthcare_services.appointment_booking,
+                    self.healthcare_services.scheduling_workflows,
+                ),
+            ),
+        )
+        self.registry.register(
+            "book_confirmed_appointment",
+            RegisteredTool(
+                definition=book_confirmed_appointment_tool,
+                request_model=BookConfirmedAppointmentRequest,
+                handler=lambda request: book_confirmed_appointment(
+                    request,
+                    self.healthcare_services.appointment_booking,
                     self.healthcare_services.scheduling_workflows,
                 ),
             ),

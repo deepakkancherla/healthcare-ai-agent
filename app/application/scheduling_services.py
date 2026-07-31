@@ -1,12 +1,22 @@
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timezone
+import hmac
 
 from app.application.ports import SlotRepository, WorkflowRepository
+from app.application.booking_errors import (
+    ConfirmationExpired,
+    ConfirmationFingerprintMismatch,
+    ConfirmationNotPrepared,
+    ExplicitConfirmationRequired,
+    InvalidBookingState,
+)
 from app.domain.models import (
     AppointmentSelection,
     AppointmentSlot,
     AvailabilityQuery,
+    BookingConfirmation,
+    ExplicitConfirmation,
     NetworkStatus,
     NetworkVerificationResult,
     ProviderCandidate,
@@ -88,6 +98,15 @@ class DefaultSchedulingWorkflowService:
         WorkflowState.AWAITING_SELECTION: {
             WorkflowState.AWAITING_CONFIRMATION,
         },
+        WorkflowState.AWAITING_CONFIRMATION: {
+            WorkflowState.AWAITING_SELECTION,
+            WorkflowState.BOOKING,
+        },
+        WorkflowState.BOOKING: {
+            WorkflowState.CONFIRMED,
+            WorkflowState.SEARCHING_AVAILABILITY,
+            WorkflowState.FAILED,
+        },
     }
 
     def __init__(
@@ -158,6 +177,8 @@ class DefaultSchedulingWorkflowService:
             availability_query=None,
             available_slot_ids=(),
             selection=None,
+            confirmation=None,
+            appointment_id=None,
         )
 
         references = tuple(
@@ -313,6 +334,103 @@ class DefaultSchedulingWorkflowService:
             workflow,
             WorkflowState.AWAITING_CONFIRMATION,
             selection=selection,
+            confirmation=None,
+            appointment_id=None,
+        )
+
+    def store_confirmation(
+        self,
+        workflow_id: str,
+        confirmation: BookingConfirmation,
+    ) -> SchedulingWorkflow:
+        workflow = self.get(workflow_id)
+        if workflow.state != WorkflowState.AWAITING_CONFIRMATION:
+            raise InvalidBookingState(
+                "A confirmation can only be prepared while awaiting "
+                "confirmation."
+            )
+        if workflow.selection is None:
+            raise ConfirmationNotPrepared(
+                "The workflow does not contain an appointment selection."
+            )
+        if confirmation.workflow_id != workflow.workflow_id:
+            raise ConfirmationFingerprintMismatch(
+                "The confirmation does not belong to this workflow."
+            )
+
+        return self._persist(
+            workflow,
+            confirmation=confirmation,
+        )
+
+    def begin_booking(
+        self,
+        workflow_id: str,
+        confirmation_fingerprint: str,
+        explicit_confirmation: ExplicitConfirmation,
+        confirmed_at: datetime,
+    ) -> SchedulingWorkflow:
+        workflow = self.get(workflow_id)
+        if workflow.state != WorkflowState.AWAITING_CONFIRMATION:
+            raise InvalidBookingState(
+                "Booking is allowed only while awaiting confirmation."
+            )
+        if not explicit_confirmation.confirmed:
+            raise ExplicitConfirmationRequired(
+                "The member must explicitly confirm the appointment."
+            )
+
+        confirmation = workflow.confirmation
+        if confirmation is None:
+            raise ConfirmationNotPrepared(
+                "A booking confirmation summary has not been prepared."
+            )
+        if not hmac.compare_digest(
+            confirmation.selection_fingerprint,
+            confirmation_fingerprint,
+        ):
+            raise ConfirmationFingerprintMismatch(
+                "The confirmation fingerprint does not match."
+            )
+        if confirmed_at >= confirmation.expires_at:
+            self._transition(
+                workflow,
+                WorkflowState.AWAITING_SELECTION,
+                selection=None,
+                confirmation=None,
+            )
+            raise ConfirmationExpired(
+                "The appointment confirmation has expired."
+            )
+
+        return self._transition(
+            workflow,
+            WorkflowState.BOOKING,
+        )
+
+    def mark_slot_unavailable(
+        self,
+        workflow_id: str,
+    ) -> SchedulingWorkflow:
+        workflow = self.get(workflow_id)
+        return self._transition(
+            workflow,
+            WorkflowState.SEARCHING_AVAILABILITY,
+            available_slot_ids=(),
+            selection=None,
+            confirmation=None,
+        )
+
+    def mark_booking_confirmed(
+        self,
+        workflow_id: str,
+        appointment_id: str,
+    ) -> SchedulingWorkflow:
+        workflow = self.get(workflow_id)
+        return self._transition(
+            workflow,
+            WorkflowState.CONFIRMED,
+            appointment_id=appointment_id,
         )
 
     def _transition(
@@ -331,6 +449,23 @@ class DefaultSchedulingWorkflowService:
         updated = replace(
             workflow,
             state=target_state,
+            version=workflow.version + 1,
+            updated_at=self._clock(),
+            **changes,
+        )
+        self._workflows.save(
+            updated,
+            expected_version=workflow.version,
+        )
+        return updated
+
+    def _persist(
+        self,
+        workflow: SchedulingWorkflow,
+        **changes,
+    ) -> SchedulingWorkflow:
+        updated = replace(
+            workflow,
             version=workflow.version + 1,
             updated_at=self._clock(),
             **changes,

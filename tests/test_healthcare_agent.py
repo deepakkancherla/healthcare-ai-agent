@@ -2,6 +2,10 @@ import json
 
 import pytest
 
+from app.infrastructure.synthetic.composition import (
+    build_synthetic_repositories,
+    build_synthetic_services,
+)
 from app.memory.memory_manager import MemoryManager
 
 from .conftest import assistant_message, tool_call
@@ -41,7 +45,7 @@ def test_agent_recalls_name_across_two_turns(agent_factory):
     assert len(client.completions.calls) == 2
 
 
-def test_agent_registers_phase_two_healthcare_tools(agent_factory):
+def test_agent_registers_phase_three_healthcare_tools(agent_factory):
     agent, _ = agent_factory([assistant_message("Done")])
 
     definitions = agent.registry.get_tool_definitions()
@@ -55,12 +59,60 @@ def test_agent_registers_phase_two_healthcare_tools(agent_factory):
         "verify_insurance",
         "search_availability",
         "select_appointment_slot",
+        "prepare_booking_confirmation",
+        "book_confirmed_appointment",
     }
 
 
-def test_agent_reaches_confirmation_in_multi_step_tool_loop(
+def test_agent_completes_confirmed_multi_turn_booking(
     agent_factory,
 ):
+    repositories = build_synthetic_repositories()
+    services = build_synthetic_services(repositories)
+
+    def request_confirmed_booking(request):
+        preparation = next(
+            json.loads(message["content"])
+            for message in request["messages"]
+            if isinstance(message, dict)
+            and message.get("tool_call_id") == "preparation-call"
+        )
+        return assistant_message(
+            tool_calls=[
+                tool_call(
+                    "booking-call",
+                    "book_confirmed_appointment",
+                    json.dumps(
+                        {
+                            "confirmation_fingerprint": (
+                                preparation[
+                                    "confirmation_fingerprint"
+                                ]
+                            ),
+                            "confirmed": True,
+                        }
+                    ),
+                )
+            ]
+        )
+
+    def return_authoritative_confirmation(request):
+        booking_result = next(
+            json.loads(message["content"])
+            for message in request["messages"]
+            if isinstance(message, dict)
+            and message.get("tool_call_id") == "booking-call"
+        )
+        assert set(booking_result) == {
+            "appointment_id",
+            "status",
+            "confirmation_number",
+        }
+        return assistant_message(
+            "Your appointment is confirmed. Confirmation: "
+            f"{booking_result['confirmation_number']}."
+        )
+
     agent, client = agent_factory(
         [
             assistant_message(
@@ -135,25 +187,60 @@ def test_agent_reaches_confirmation_in_multi_step_tool_loop(
                 ]
             ),
             assistant_message(
-                "Please confirm the selected appointment."
+                tool_calls=[
+                    tool_call(
+                        "preparation-call",
+                        "prepare_booking_confirmation",
+                        "{}",
+                    )
+                ]
             ),
-        ]
+            assistant_message(
+                (
+                    "Please confirm: Dr. Sarah Johnson, Dermatology, "
+                    "100 Synthetic Health Way, Plano, TX 75024, "
+                    "August 4 at 10:00 AM America/Chicago, in person, "
+                    "verified in-network."
+                )
+            ),
+            request_confirmed_booking,
+            return_authoritative_confirmation,
+        ],
+        healthcare_services=services,
     )
 
     options_response = agent.chat(
         "Find a dermatologist appointment for August 4."
     )
-    confirmation_response = agent.chat(
+    preparation_response = agent.chat(
         "Select the 10:00 AM appointment."
     )
+    workflow = services.scheduling_workflows.get_for_conversation(
+        "deepak",
+        "conversation-deepak",
+    )
+    assert workflow is not None
+    assert workflow.state.value == "awaiting_confirmation"
+    assert workflow.confirmation is not None
+    assert repositories.appointments.list_all() == []
+
+    booking_response = agent.chat("Confirm.")
 
     assert options_response == (
         "I found a 10:00 AM appointment. Would you like it?"
     )
-    assert confirmation_response == (
-        "Please confirm the selected appointment."
+    assert preparation_response == (
+        "Please confirm: Dr. Sarah Johnson, Dermatology, "
+        "100 Synthetic Health Way, Plano, TX 75024, "
+        "August 4 at 10:00 AM America/Chicago, in person, "
+        "verified in-network."
     )
-    assert len(client.completions.calls) == 6
+    appointment = repositories.appointments.list_all()[0]
+    assert booking_response == (
+        "Your appointment is confirmed. Confirmation: "
+        f"{appointment.confirmation_number}."
+    )
+    assert len(client.completions.calls) == 9
 
     tool_messages = [
         message
@@ -169,12 +256,16 @@ def test_agent_reaches_confirmation_in_multi_step_tool_loop(
         "insurance-call",
         "availability-call",
         "selection-call",
+        "preparation-call",
+        "booking-call",
     ]
 
     provider_result = json.loads(tool_messages[0]["content"])
     insurance_result = json.loads(tool_messages[1]["content"])
     availability_result = json.loads(tool_messages[2]["content"])
     selection_result = json.loads(tool_messages[3]["content"])
+    preparation_result = json.loads(tool_messages[4]["content"])
+    booking_result = json.loads(tool_messages[5]["content"])
 
     assert provider_result[0]["name"] == "Dr. Sarah Johnson"
     assert provider_result[0]["provider_id"] == (
@@ -193,15 +284,31 @@ def test_agent_reaches_confirmation_in_multi_step_tool_loop(
         "awaiting_confirmation"
     )
     assert selection_result["requires_confirmation"] is True
-
-    workflow = (
-        agent.healthcare_services.scheduling_workflows
-        .get_for_conversation("deepak", "conversation-deepak")
+    assert preparation_result["summary"]["provider_name"] == (
+        "Dr. Sarah Johnson"
     )
-    assert workflow is not None
-    assert workflow.state.value == "awaiting_confirmation"
-    assert workflow.selection is not None
-    assert workflow.selection.slot_id == (
+    assert len(
+        preparation_result["confirmation_fingerprint"]
+    ) == 64
+    assert booking_result == {
+        "appointment_id": appointment.appointment_id,
+        "status": "confirmed",
+        "confirmation_number": appointment.confirmation_number,
+    }
+
+    confirmed_workflow = (
+        services.scheduling_workflows.get_for_conversation(
+            "deepak",
+            "conversation-deepak",
+        )
+    )
+    assert confirmed_workflow is not None
+    assert confirmed_workflow.state.value == "confirmed"
+    assert confirmed_workflow.appointment_id == (
+        appointment.appointment_id
+    )
+    assert confirmed_workflow.selection is not None
+    assert confirmed_workflow.selection.slot_id == (
         "slot-sarah-plano-20260804-1000"
     )
 
