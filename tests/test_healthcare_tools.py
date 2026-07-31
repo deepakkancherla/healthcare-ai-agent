@@ -6,6 +6,7 @@ from app.infrastructure.synthetic.composition import (
 )
 from app.tools.insurance import (
     InsuranceVerificationRequest,
+    NetworkVerificationToolRequest,
     insurance_verification_tool,
     verify_insurance,
 )
@@ -54,6 +55,11 @@ def test_provider_tool_retains_direct_call_compatibility():
     )
 
     assert result[0]["provider_id"] == "provider-sarah-johnson"
+
+
+def test_provider_tool_requires_search_requirements():
+    with pytest.raises(ValidationError):
+        ProviderSearchRequest(location="Plano")
 
 
 def test_insurance_tool_preserves_legacy_contract_and_adds_status(
@@ -133,13 +139,25 @@ def test_insurance_tool_validates_service_date():
         )
 
 
+def test_agent_network_tool_requires_verification_dimensions():
+    with pytest.raises(ValidationError):
+        NetworkVerificationToolRequest(
+            insurance_name="BCBS",
+            provider_name="Dr. Sarah Johnson",
+        )
+
+
 def test_insurance_tool_advertises_network_verification_dimensions():
-    properties = insurance_verification_tool["function"]["parameters"][
-        "properties"
-    ]
+    parameters = insurance_verification_tool["function"]["parameters"]
+    properties = parameters["properties"]
 
     assert {
         "provider_location",
         "specialty",
         "service_date",
     } <= properties.keys()
+    assert {
+        "provider_location",
+        "specialty",
+        "service_date",
+    } <= set(parameters["required"])

@@ -1,9 +1,11 @@
 from dataclasses import dataclass
 
 from app.application.service_interfaces import (
+    AvailabilityService,
     MemberProfileService,
     NetworkVerificationService,
     ProviderDirectoryService,
+    SchedulingWorkflowService,
 )
 from app.application.ports import (
     AppointmentRepository,
@@ -15,6 +17,11 @@ from app.application.ports import (
     ProviderNetworkRepository,
     ProviderRepository,
     SlotRepository,
+    WorkflowRepository,
+)
+from app.application.scheduling_services import (
+    DefaultAvailabilityService,
+    DefaultSchedulingWorkflowService,
 )
 from app.application.services import (
     DefaultMemberProfileService,
@@ -42,6 +49,7 @@ from app.infrastructure.synthetic.repositories import (
     InMemoryProviderNetworkRepository,
     InMemoryProviderRepository,
     InMemorySlotRepository,
+    InMemoryWorkflowRepository,
 )
 
 
@@ -56,6 +64,7 @@ class SyntheticRepositories:
     network_participations: NetworkParticipationRepository
     slots: SlotRepository
     appointments: AppointmentRepository
+    workflows: WorkflowRepository
 
 
 @dataclass(frozen=True)
@@ -63,6 +72,8 @@ class HealthcareServices:
     member_profiles: MemberProfileService
     provider_directory: ProviderDirectoryService
     network_verification: NetworkVerificationService
+    availability: AvailabilityService
+    scheduling_workflows: SchedulingWorkflowService
 
 
 def build_synthetic_repositories() -> SyntheticRepositories:
@@ -82,6 +93,7 @@ def build_synthetic_repositories() -> SyntheticRepositories:
         ),
         slots=InMemorySlotRepository(SLOTS),
         appointments=InMemoryAppointmentRepository(APPOINTMENTS),
+        workflows=InMemoryWorkflowRepository(),
     )
 
 
@@ -105,5 +117,11 @@ def build_synthetic_services(
             participation_repository=(
                 repositories.network_participations
             ),
+        ),
+        availability=DefaultAvailabilityService(
+            slot_repository=repositories.slots,
+        ),
+        scheduling_workflows=DefaultSchedulingWorkflowService(
+            workflow_repository=repositories.workflows,
         ),
     )

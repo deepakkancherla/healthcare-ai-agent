@@ -1,9 +1,16 @@
 from pydantic import BaseModel
 
-from app.application.service_interfaces import ProviderDirectoryService
+from app.application.service_interfaces import (
+    ProviderDirectoryService,
+    SchedulingWorkflowService,
+)
 from app.domain.models import ProviderSearchCriteria
 from app.infrastructure.synthetic.composition import (
     build_synthetic_services,
+)
+from app.tools.scheduling_context import (
+    SYNTHETIC_CONVERSATION_ID,
+    SYNTHETIC_MEMBER_ID,
 )
 
 
@@ -16,6 +23,7 @@ class ProviderSearchRequest(BaseModel):
 def provider_search(
     request: ProviderSearchRequest,
     service: ProviderDirectoryService | None = None,
+    scheduling_workflows: SchedulingWorkflowService | None = None,
 ):
     """
     Adapt the model-facing request to the provider directory service.
@@ -23,15 +31,25 @@ def provider_search(
     provider_directory = (
         service or build_synthetic_services().provider_directory
     )
-    candidates = provider_directory.search(
-        ProviderSearchCriteria(
-            location=request.location,
-            specialty=request.specialty,
-            gender=request.gender,
-        )
+    criteria = ProviderSearchCriteria(
+        location=request.location,
+        specialty=request.specialty,
+        gender=request.gender,
     )
+    candidates = provider_directory.search(criteria)
+    workflow_id = None
+    workflow_state = None
+    if scheduling_workflows is not None:
+        workflow = scheduling_workflows.record_provider_search(
+            member_id=SYNTHETIC_MEMBER_ID,
+            conversation_id=SYNTHETIC_CONVERSATION_ID,
+            criteria=criteria,
+            candidates=candidates,
+        )
+        workflow_id = workflow.workflow_id
+        workflow_state = workflow.state.value
 
-    return [
+    results = [
         {
             "provider_id": candidate.provider.provider_id,
             "provider_location_id": (
@@ -47,6 +65,12 @@ def provider_search(
         }
         for candidate in candidates
     ]
+    if workflow_id is not None:
+        for result in results:
+            result["workflow_id"] = workflow_id
+            result["workflow_state"] = workflow_state
+
+    return results
 
 provider_search_tool = {
     "type": "function",

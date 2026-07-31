@@ -6,11 +6,16 @@ from app.application.service_interfaces import (
     MemberProfileService,
     NetworkVerificationService,
     ProviderDirectoryService,
+    SchedulingWorkflowService,
 )
 from app.domain.models import NetworkStatus
 from app.infrastructure.synthetic.fixtures.v1 import DEFAULT_SERVICE_DATE
 from app.infrastructure.synthetic.composition import (
     build_synthetic_services,
+)
+from app.tools.scheduling_context import (
+    SYNTHETIC_CONVERSATION_ID,
+    SYNTHETIC_MEMBER_ID,
 )
 
 
@@ -26,11 +31,18 @@ class InsuranceVerificationRequest(BaseModel):
     gender: str | None = None
 
 
+class NetworkVerificationToolRequest(InsuranceVerificationRequest):
+    provider_location: str
+    specialty: str
+    service_date: date
+
+
 def verify_insurance(
     request: InsuranceVerificationRequest,
     member_profiles: MemberProfileService | None = None,
     provider_directory: ProviderDirectoryService | None = None,
     network_verification: NetworkVerificationService | None = None,
+    scheduling_workflows: SchedulingWorkflowService | None = None,
 ):
     """
     Adapt the legacy insurance tool to plan-specific network verification.
@@ -56,7 +68,7 @@ def verify_insurance(
         )
 
     coverage = member_profiles.get_member_context(
-        member_id="deepak",
+        member_id=SYNTHETIC_MEMBER_ID,
         service_date=request.service_date,
     )
     provider = provider_directory.resolve(
@@ -66,10 +78,15 @@ def verify_insurance(
     )
 
     if provider is None:
+        workflow_id, workflow_state = _record_network_failure(
+            scheduling_workflows
+        )
         return _response(
             request=request,
             status=NetworkStatus.UNKNOWN,
             reason="The provider or requested location was not found.",
+            workflow_id=workflow_id,
+            workflow_state=workflow_state,
         )
 
     plan_names = {
@@ -77,6 +94,9 @@ def verify_insurance(
         coverage.health_plan.product_name.casefold(),
     }
     if request.insurance_name.casefold() not in plan_names:
+        workflow_id, workflow_state = _record_network_failure(
+            scheduling_workflows
+        )
         return _response(
             request=request,
             status=NetworkStatus.UNKNOWN,
@@ -91,6 +111,8 @@ def verify_insurance(
                 provider.location.provider_location_id
             ),
             specialty=provider.matched_specialty,
+            workflow_id=workflow_id,
+            workflow_state=workflow_state,
         )
 
     result = network_verification.verify(
@@ -100,6 +122,19 @@ def verify_insurance(
         specialty_or_service_code=provider.matched_specialty,
         service_date=request.service_date,
     )
+    workflow_id = None
+    workflow_state = None
+    if scheduling_workflows is not None:
+        workflow = scheduling_workflows.start_or_resume(
+            member_id=SYNTHETIC_MEMBER_ID,
+            conversation_id=SYNTHETIC_CONVERSATION_ID,
+        )
+        workflow = scheduling_workflows.record_network_verification(
+            workflow_id=workflow.workflow_id,
+            result=result,
+        )
+        workflow_id = workflow.workflow_id
+        workflow_state = workflow.state.value
 
     return _response(
         request=request,
@@ -111,7 +146,25 @@ def verify_insurance(
         provider_location_id=result.provider_location_id,
         specialty=result.specialty_or_service_code,
         source_reference=result.source_reference,
+        workflow_id=workflow_id,
+        workflow_state=workflow_state,
     )
+
+
+def _record_network_failure(
+    scheduling_workflows: SchedulingWorkflowService | None,
+) -> tuple[str | None, str | None]:
+    if scheduling_workflows is None:
+        return None, None
+
+    workflow = scheduling_workflows.start_or_resume(
+        member_id=SYNTHETIC_MEMBER_ID,
+        conversation_id=SYNTHETIC_CONVERSATION_ID,
+    )
+    workflow = scheduling_workflows.record_network_failure(
+        workflow.workflow_id
+    )
+    return workflow.workflow_id, workflow.state.value
 
 
 def _response(
@@ -124,8 +177,10 @@ def _response(
     provider_location_id: str | None = None,
     specialty: str | None = None,
     source_reference: str | None = None,
+    workflow_id: str | None = None,
+    workflow_state: str | None = None,
 ) -> dict:
-    return {
+    response = {
         "insurance_name": request.insurance_name,
         "provider_name": request.provider_name,
         "policy_number": request.policy_number or "N/A",
@@ -143,6 +198,10 @@ def _response(
         "source_reference": source_reference,
         "reason": reason,
     }
+    if workflow_id is not None:
+        response["workflow_id"] = workflow_id
+        response["workflow_state"] = workflow_state
+    return response
 
 
 insurance_verification_tool = {
@@ -195,7 +254,13 @@ insurance_verification_tool = {
                 },
                 "gender": {"type": "string", "description": "Gender (optional)."},
             },
-            "required": ["insurance_name", "provider_name"],
+            "required": [
+                "insurance_name",
+                "provider_name",
+                "provider_location",
+                "specialty",
+                "service_date",
+            ],
         },
     },
 }
