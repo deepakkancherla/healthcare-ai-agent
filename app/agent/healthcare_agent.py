@@ -2,14 +2,34 @@ import json
 import logging
 
 from app.config import DEFAULT_MODEL, TEMPERATURE
+from app.infrastructure.synthetic.composition import (
+    HealthcareServices,
+    build_synthetic_services,
+)
 from app.llm.llm_client import get_llm_client
 from app.memory.memory_extractor import MemoryExtractor
 from app.memory.memory_manager import MemoryManager
 from app.prompts.system_prompt import SYSTEM_PROMPT
 from app.tools.insurance import (
-    InsuranceVerificationRequest,
+    NetworkVerificationToolRequest,
     insurance_verification_tool,
     verify_insurance,
+)
+from app.tools.availability import (
+    AppointmentSelectionRequest,
+    AvailabilitySearchRequest,
+    appointment_selection_tool,
+    availability_search_tool,
+    search_availability,
+    select_appointment_slot,
+)
+from app.tools.booking import (
+    BookConfirmedAppointmentRequest,
+    PrepareBookingConfirmationRequest,
+    book_confirmed_appointment,
+    book_confirmed_appointment_tool,
+    prepare_booking_confirmation,
+    prepare_booking_confirmation_tool,
 )
 from app.tools.provider_search import (
     provider_search,
@@ -22,13 +42,6 @@ from app.tools.tool_registry import (
     RegisteredTool,
 )
 
-from app.tools.appointment import (
-    AppointmentBookingRequest,
-    appointment_booking_tool,
-    book_appointment,
-)
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -37,9 +50,13 @@ class HealthcareAgent:
         self,
         tool_registry: ToolRegistry,
         memory_manager: MemoryManager,
+        healthcare_services: HealthcareServices | None = None,
     ):
         self.registry = tool_registry
         self.manager = memory_manager
+        self.healthcare_services = (
+            healthcare_services or build_synthetic_services()
+        )
         self.memory_extractor = MemoryExtractor()
         self.client = get_llm_client()
         self.messages = [
@@ -54,24 +71,74 @@ class HealthcareAgent:
             RegisteredTool(
                 definition=provider_search_tool,
                 request_model=ProviderSearchRequest,
-                handler=provider_search,
+                handler=lambda request: provider_search(
+                    request,
+                    self.healthcare_services.provider_directory,
+                    self.healthcare_services.scheduling_workflows,
+                ),
             ),
         )
         self.registry.register(
             "verify_insurance",
             RegisteredTool(
                 definition=insurance_verification_tool,
-                request_model=InsuranceVerificationRequest,
-                handler=verify_insurance,
+                request_model=NetworkVerificationToolRequest,
+                handler=lambda request: verify_insurance(
+                    request,
+                    self.healthcare_services.member_profiles,
+                    self.healthcare_services.provider_directory,
+                    self.healthcare_services.network_verification,
+                    self.healthcare_services.scheduling_workflows,
+                ),
             ),
         )
 
         self.registry.register(
-            "book_appointment",
+            "search_availability",
             RegisteredTool(
-                definition=appointment_booking_tool,
-                request_model=AppointmentBookingRequest,
-                handler=book_appointment,
+                definition=availability_search_tool,
+                request_model=AvailabilitySearchRequest,
+                handler=lambda request: search_availability(
+                    request,
+                    self.healthcare_services.availability,
+                    self.healthcare_services.scheduling_workflows,
+                ),
+            ),
+        )
+        self.registry.register(
+            "select_appointment_slot",
+            RegisteredTool(
+                definition=appointment_selection_tool,
+                request_model=AppointmentSelectionRequest,
+                handler=lambda request: select_appointment_slot(
+                    request,
+                    self.healthcare_services.availability,
+                    self.healthcare_services.scheduling_workflows,
+                ),
+            ),
+        )
+        self.registry.register(
+            "prepare_booking_confirmation",
+            RegisteredTool(
+                definition=prepare_booking_confirmation_tool,
+                request_model=PrepareBookingConfirmationRequest,
+                handler=lambda request: prepare_booking_confirmation(
+                    request,
+                    self.healthcare_services.appointment_booking,
+                    self.healthcare_services.scheduling_workflows,
+                ),
+            ),
+        )
+        self.registry.register(
+            "book_confirmed_appointment",
+            RegisteredTool(
+                definition=book_confirmed_appointment_tool,
+                request_model=BookConfirmedAppointmentRequest,
+                handler=lambda request: book_confirmed_appointment(
+                    request,
+                    self.healthcare_services.appointment_booking,
+                    self.healthcare_services.scheduling_workflows,
+                ),
             ),
         )
 
