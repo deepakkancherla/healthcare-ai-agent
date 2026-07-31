@@ -1,9 +1,12 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Protocol
 
 from app.domain.models import (
+    Appointment,
     AppointmentSlot,
     AvailabilityQuery,
+    BookingConfirmation,
+    ExplicitConfirmation,
     MemberCoverageContext,
     NetworkVerificationResult,
     ProviderCandidate,
@@ -100,3 +103,42 @@ class SchedulingWorkflowService(Protocol):
         workflow_id: str,
         slot: AppointmentSlot,
     ) -> SchedulingWorkflow: ...
+
+    def store_confirmation(
+        self,
+        workflow_id: str,
+        confirmation: BookingConfirmation,
+    ) -> SchedulingWorkflow: ...
+
+    def begin_booking(
+        self,
+        workflow_id: str,
+        confirmation_fingerprint: str,
+        explicit_confirmation: ExplicitConfirmation,
+        confirmed_at: datetime,
+    ) -> SchedulingWorkflow: ...
+
+    def mark_slot_unavailable(
+        self,
+        workflow_id: str,
+    ) -> SchedulingWorkflow: ...
+
+    def mark_booking_confirmed(
+        self,
+        workflow_id: str,
+        appointment_id: str,
+    ) -> SchedulingWorkflow: ...
+
+
+class AppointmentBookingService(Protocol):
+    def prepare_confirmation(
+        self,
+        workflow_id: str,
+    ) -> BookingConfirmation: ...
+
+    def book(
+        self,
+        workflow_id: str,
+        confirmation_fingerprint: str,
+        explicit_confirmation: ExplicitConfirmation,
+    ) -> Appointment: ...

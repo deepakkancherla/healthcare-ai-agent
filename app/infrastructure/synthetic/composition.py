@@ -1,11 +1,18 @@
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from threading import RLock
 
 from app.application.service_interfaces import (
+    AppointmentBookingService,
     AvailabilityService,
     MemberProfileService,
     NetworkVerificationService,
     ProviderDirectoryService,
     SchedulingWorkflowService,
+)
+from app.application.booking_services import (
+    DefaultAppointmentBookingService,
 )
 from app.application.ports import (
     AppointmentRepository,
@@ -74,9 +81,20 @@ class HealthcareServices:
     network_verification: NetworkVerificationService
     availability: AvailabilityService
     scheduling_workflows: SchedulingWorkflowService
+    appointment_booking: AppointmentBookingService
 
 
 def build_synthetic_repositories() -> SyntheticRepositories:
+    booking_lock = RLock()
+    slot_repository = InMemorySlotRepository(
+        SLOTS,
+        lock=booking_lock,
+    )
+    appointment_repository = InMemoryAppointmentRepository(
+        APPOINTMENTS,
+        slot_repository=slot_repository,
+        lock=booking_lock,
+    )
     return SyntheticRepositories(
         members=InMemoryMemberRepository(MEMBERS),
         enrollments=InMemoryEnrollmentRepository(ENROLLMENTS),
@@ -91,17 +109,23 @@ def build_synthetic_repositories() -> SyntheticRepositories:
                 NETWORK_PARTICIPATIONS
             )
         ),
-        slots=InMemorySlotRepository(SLOTS),
-        appointments=InMemoryAppointmentRepository(APPOINTMENTS),
+        slots=slot_repository,
+        appointments=appointment_repository,
         workflows=InMemoryWorkflowRepository(),
     )
 
 
 def build_synthetic_services(
     repositories: SyntheticRepositories | None = None,
+    clock: Callable[[], datetime] | None = None,
+    confirmation_ttl: timedelta = timedelta(minutes=10),
 ) -> HealthcareServices:
     repositories = repositories or build_synthetic_repositories()
 
+    scheduling_workflows = DefaultSchedulingWorkflowService(
+        workflow_repository=repositories.workflows,
+        clock=clock,
+    )
     return HealthcareServices(
         member_profiles=DefaultMemberProfileService(
             member_repository=repositories.members,
@@ -121,7 +145,14 @@ def build_synthetic_services(
         availability=DefaultAvailabilityService(
             slot_repository=repositories.slots,
         ),
-        scheduling_workflows=DefaultSchedulingWorkflowService(
-            workflow_repository=repositories.workflows,
+        scheduling_workflows=scheduling_workflows,
+        appointment_booking=DefaultAppointmentBookingService(
+            workflow_service=scheduling_workflows,
+            provider_repository=repositories.providers,
+            location_repository=repositories.provider_locations,
+            slot_repository=repositories.slots,
+            appointment_repository=repositories.appointments,
+            clock=clock,
+            confirmation_ttl=confirmation_ttl,
         ),
     )

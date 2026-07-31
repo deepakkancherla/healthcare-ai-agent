@@ -147,6 +147,33 @@ class Appointment:
 
 
 @dataclass(frozen=True)
+class ConfirmationSummary:
+    provider_name: str
+    specialty: str
+    location: str
+    start_at: datetime
+    end_at: datetime
+    time_zone: str
+    modality: str
+    network_status: NetworkStatus
+    limitations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BookingConfirmation:
+    workflow_id: str
+    selection_fingerprint: str
+    summary: ConfirmationSummary
+    presented_at: datetime
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
+class ExplicitConfirmation:
+    confirmed: bool
+
+
+@dataclass(frozen=True)
 class MemberCoverageContext:
     member: Member
     enrollment: Enrollment
@@ -222,3 +249,5 @@ class SchedulingWorkflow:
     availability_query: AvailabilityQuery | None = None
     available_slot_ids: tuple[str, ...] = ()
     selection: AppointmentSelection | None = None
+    confirmation: BookingConfirmation | None = None
+    appointment_id: str | None = None

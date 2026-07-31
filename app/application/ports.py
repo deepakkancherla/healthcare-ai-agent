@@ -68,11 +68,28 @@ class SlotRepository(Protocol):
 
     def list_all(self) -> list[AppointmentSlot]: ...
 
+    def update(
+        self,
+        slot: AppointmentSlot,
+        expected_version: int,
+    ) -> None: ...
+
 
 class AppointmentRepository(Protocol):
     def get(self, appointment_id: str) -> Appointment | None: ...
 
     def list_all(self) -> list[Appointment]: ...
+
+    def find_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> Appointment | None: ...
+
+    def create_for_available_slot(
+        self,
+        appointment: Appointment,
+        expected_slot_version: int,
+    ) -> Appointment: ...
 
 
 class WorkflowRepository(Protocol):

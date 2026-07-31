@@ -5,6 +5,7 @@ import pytest
 
 from app.agent.healthcare_agent import HealthcareAgent
 from app.memory.memory_manager import MemoryManager
+from app.infrastructure.synthetic.composition import HealthcareServices
 from app.tools.tool_registry import ToolRegistry
 
 
@@ -79,6 +80,7 @@ def agent_factory(monkeypatch):
         *,
         memory_manager: MemoryManager | None = None,
         tool_registry: ToolRegistry | None = None,
+        healthcare_services: HealthcareServices | None = None,
     ) -> tuple[HealthcareAgent, FakeOpenAIClient]:
         client = FakeOpenAIClient(responses)
         monkeypatch.setattr(
@@ -89,6 +91,7 @@ def agent_factory(monkeypatch):
         agent = HealthcareAgent(
             tool_registry=tool_registry or ToolRegistry(),
             memory_manager=memory_manager or MemoryManager(),
+            healthcare_services=healthcare_services,
         )
 
         return agent, client

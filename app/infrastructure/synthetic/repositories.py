@@ -1,5 +1,9 @@
+from dataclasses import replace
 from datetime import date
+from threading import RLock
+from typing import Any
 
+from app.application.booking_errors import SlotReservationConflict
 from app.domain.models import (
     Appointment,
     AppointmentSlot,
@@ -131,28 +135,108 @@ class InMemoryNetworkParticipationRepository:
 
 
 class InMemorySlotRepository:
-    def __init__(self, slots: tuple[AppointmentSlot, ...]):
+    def __init__(
+        self,
+        slots: tuple[AppointmentSlot, ...],
+        lock: Any | None = None,
+    ):
         self._slots = {slot.slot_id: slot for slot in slots}
+        self._lock = lock or RLock()
 
     def get(self, slot_id: str) -> AppointmentSlot | None:
-        return self._slots.get(slot_id)
+        with self._lock:
+            return self._slots.get(slot_id)
 
     def list_all(self) -> list[AppointmentSlot]:
-        return list(self._slots.values())
+        with self._lock:
+            return list(self._slots.values())
+
+    def update(
+        self,
+        slot: AppointmentSlot,
+        expected_version: int,
+    ) -> None:
+        with self._lock:
+            current = self._slots.get(slot.slot_id)
+            if current is None or current.version != expected_version:
+                raise SlotReservationConflict(
+                    "The appointment slot version changed."
+                )
+            self._slots[slot.slot_id] = slot
 
 
 class InMemoryAppointmentRepository:
-    def __init__(self, appointments: tuple[Appointment, ...]):
+    def __init__(
+        self,
+        appointments: tuple[Appointment, ...],
+        slot_repository: InMemorySlotRepository,
+        lock: Any | None = None,
+    ):
         self._appointments = {
             appointment.appointment_id: appointment
             for appointment in appointments
         }
+        self._slots = slot_repository
+        self._lock = lock or RLock()
 
     def get(self, appointment_id: str) -> Appointment | None:
-        return self._appointments.get(appointment_id)
+        with self._lock:
+            return self._appointments.get(appointment_id)
 
     def list_all(self) -> list[Appointment]:
-        return list(self._appointments.values())
+        with self._lock:
+            return list(self._appointments.values())
+
+    def find_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> Appointment | None:
+        with self._lock:
+            return next(
+                (
+                    appointment
+                    for appointment in self._appointments.values()
+                    if appointment.idempotency_key == idempotency_key
+                ),
+                None,
+            )
+
+    def create_for_available_slot(
+        self,
+        appointment: Appointment,
+        expected_slot_version: int,
+    ) -> Appointment:
+        with self._lock:
+            existing = self.find_by_idempotency_key(
+                appointment.idempotency_key
+            )
+            if existing is not None:
+                return existing
+
+            slot = self._slots.get(appointment.slot_id)
+            if (
+                slot is None
+                or slot.status != "available"
+                or slot.version != expected_slot_version
+            ):
+                raise SlotReservationConflict(
+                    "The appointment slot is no longer available."
+                )
+            if appointment.appointment_id in self._appointments:
+                raise RuntimeError("Appointment identifier already exists.")
+
+            self._slots.update(
+                replace(
+                    slot,
+                    status="booked",
+                    version=slot.version + 1,
+                ),
+                expected_version=slot.version,
+            )
+            self._appointments[
+                appointment.appointment_id
+            ] = appointment
+            return appointment
 
 
 class WorkflowVersionConflict(RuntimeError):
